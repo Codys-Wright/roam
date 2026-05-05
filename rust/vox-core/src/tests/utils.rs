@@ -334,6 +334,10 @@ pub(crate) struct RetryAfterResumeHandler {
 pub(crate) struct OperationIdHandler;
 
 impl Handler<DriverReplySink> for OperationIdHandler {
+    fn retry_policy(&self, _method_id: vox_types::MethodId) -> vox_types::RetryPolicy {
+        vox_types::RetryPolicy::PERSIST
+    }
+
     async fn handle(
         &self,
         call: SelfRef<RequestCall<'static>>,

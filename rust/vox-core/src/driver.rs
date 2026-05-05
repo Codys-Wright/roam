@@ -1176,10 +1176,20 @@ impl ReplySink for DriverReplySink {
                 self.request_id,
                 self.method_id
             );
-            if let Err(_e) = sender
-                .send_response_for_method(self.request_id, self.method_id, response)
-                .await
+            let mut response = response;
+            if let (Payload::PostcardBytes(_), Some(response_shape)) =
+                (&response.ret, self.handler_response_shape)
             {
+                sender.prepare_replay_schemas(
+                    self.request_id,
+                    self.method_id,
+                    response_shape,
+                    &mut response,
+                );
+            } else {
+                sender.prepare_response_for_method(self.request_id, self.method_id, &mut response);
+            }
+            if let Err(_e) = sender.send_response(self.request_id, response).await {
                 sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
             }
         }
@@ -2802,8 +2812,10 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             let call_ref = call.get();
             let handler = Arc::clone(&self.handler);
             let retry = handler.retry_policy(call_ref.method_id);
-            // Idempotent requests can be re-executed safely; skip operation tracking/storage.
-            let operation_id = metadata_operation_id(&call_ref.metadata).filter(|_| !retry.idem);
+            // Only persistent methods need operation tracking/storage. Volatile
+            // methods are normal one-shot calls, and idempotent methods can be
+            // re-executed safely by definition.
+            let operation_id = metadata_operation_id(&call_ref.metadata).filter(|_| retry.persist);
             let method_id = call_ref.method_id;
 
             if let Some(operation_id) = operation_id {
@@ -2895,9 +2907,9 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         return;
                     }
                     crate::OperationState::Unknown => {
-                        // New operation — admit in the persistent store if non-idem.
-                        // Idem operations can safely be re-executed, no need to track.
-                        if !retry.idem {
+                        // New operation — admit only methods that requested
+                        // persistent retry semantics.
+                        if retry.persist {
                             self.shared.operations.admit(operation_id);
                         }
                     }
