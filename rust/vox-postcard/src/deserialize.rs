@@ -179,6 +179,10 @@ fn deserialize_value<'de, 'facet, const BORROW: bool>(
         return deserialize_chrono(partial, cursor);
     }
 
+    if is_uuid_shape(shape) {
+        return deserialize_uuid(partial, cursor);
+    }
+
     // Scalars
     if let Some(scalar_type) = shape.scalar_type() {
         return deserialize_scalar::<BORROW>(partial, cursor, scalar_type);
@@ -265,6 +269,22 @@ fn deserialize_value<'de, 'facet, const BORROW: bool>(
     }
 }
 
+fn is_uuid_shape(shape: &'static facet_core::Shape) -> bool {
+    format!("{shape}") == "Uuid"
+}
+
+fn deserialize_uuid<'de, 'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
+    cursor: &mut Cursor<'de>,
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
+    let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
+    let bytes = cursor.read_bytes(16)?;
+    let arr: [u8; 16] = bytes
+        .try_into()
+        .map_err(|_| DeserializeError::Custom("uuid expected 16 bytes".into()))?;
+    partial.set(uuid::Uuid::from_bytes(arr)).map_err(re)
+}
+
 fn is_chrono_shape(shape: &'static facet_core::Shape) -> bool {
     let name = format!("{shape}");
     name == "DateTime<Utc>" || name == "NaiveDate"
@@ -301,7 +321,6 @@ fn deserialize_struct_planned<'de, 'facet, const BORROW: bool>(
     registry: &SchemaRegistry,
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
-
     let (field_ops, nested) = match plan {
         TranslationPlan::Struct { field_ops, nested }
         | TranslationPlan::Tuple { field_ops, nested } => (field_ops.as_slice(), nested),

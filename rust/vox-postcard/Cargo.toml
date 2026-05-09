@@ -18,9 +18,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 chrono = { workspace = true }
-facet = { workspace = true }
+facet = { workspace = true, features = ["uuid"] }
 facet-core = { workspace = true }
 facet-reflect = { workspace = true }
+uuid = { workspace = true }
 vox-schema = { workspace = true }
 
 [dev-dependencies]

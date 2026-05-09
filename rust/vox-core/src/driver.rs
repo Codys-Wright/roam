@@ -452,9 +452,22 @@ impl ReplySink for DriverReplySink {
 
             // Serialize the response WITHOUT schemas for the operation store.
             let schemas_for_wire = std::mem::take(&mut response.schemas);
-            let encoded_for_store = PostcardPayload(
-                vox_postcard::to_vec(&response).expect("serialize operation response for store"),
-            );
+            let encoded_for_store = match vox_postcard::to_vec(&response) {
+                Ok(bytes) => PostcardPayload(bytes),
+                Err(err) => {
+                    response.schemas = schemas_for_wire;
+                    tracing::error!(
+                        target: "vox::driver",
+                        method = ?self.method_id,
+                        request_id = ?self.request_id,
+                        operation_id = ?operation_id,
+                        error = %err,
+                        "failed to serialize operation response for store; cancelling request"
+                    );
+                    sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
+                    return;
+                }
+            };
             response.schemas = schemas_for_wire;
 
             // Send the full response (with schemas) on the wire.

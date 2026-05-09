@@ -134,6 +134,12 @@ fn serialize_peek_inner<'a>(
         return Ok(());
     }
 
+    if is_uuid_shape(peek.shape()) {
+        let value = peek.get::<uuid::Uuid>().map_err(re)?;
+        out.write_bytes(value.as_bytes());
+        return Ok(());
+    }
+
     // Handle proxy types (e.g. Rx<T>, Tx<T> with #[facet(proxy = ())])
     if let Some(proxy_def) = peek.shape().proxy {
         let proxy_shape = proxy_def.shape;
@@ -348,6 +354,10 @@ fn serialize_peek_inner<'a>(
         }
         _ => Err(SerializeError::UnsupportedType(format!("{}", peek.shape()))),
     }
+}
+
+fn is_uuid_shape(shape: &'static facet_core::Shape) -> bool {
+    format!("{shape}") == "Uuid"
 }
 
 fn chrono_string_value(peek: Peek<'_, '_>) -> Result<Option<String>, SerializeError> {
