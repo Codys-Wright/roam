@@ -1384,6 +1384,10 @@ pub struct Caller {
     inner: Arc<DriverCaller>,
     service: Option<&'static vox_types::ServiceDescriptor>,
     middlewares: Vec<Arc<dyn vox_types::ClientMiddleware>>,
+    /// Middlewares that run on **every** call this caller (and every
+    /// clone of it) makes, whatever service the call is for. See
+    /// [`Caller::with_global_middleware`].
+    global_middlewares: Vec<Arc<dyn vox_types::ClientMiddleware>>,
 }
 
 impl Caller {
@@ -1393,6 +1397,7 @@ impl Caller {
             inner: Arc::new(driver),
             service: None,
             middlewares: vec![],
+            global_middlewares: vec![],
         }
     }
 
@@ -1426,17 +1431,39 @@ impl Caller {
         self
     }
 
+    /// Append a middleware that runs on **every** call, whatever service
+    /// the call is for — and survives [`Caller::with_service`], so it is
+    /// inherited by every typed client built from a clone of this caller.
+    ///
+    /// This is the connection-level seam [`Caller::with_middleware`]
+    /// cannot be: that one keys the middleware to a single service
+    /// descriptor, which is right for service-specific concerns and
+    /// wrong for an identity that must ride every call a connection
+    /// makes. A transport with no handshake to hang a credential on
+    /// (iroh, a bare stream) attaches it here once, on the root caller,
+    /// and every service lane built over that connection presents it.
+    ///
+    /// Global middlewares run before the per-service chain on the way
+    /// out and after it on the way back (outermost wrapping).
+    pub fn with_global_middleware(mut self, middleware: impl vox_types::ClientMiddleware) -> Self {
+        self.global_middlewares.push(Arc::new(middleware));
+        self
+    }
+
     /// Start one outgoing request attempt and wait for its response,
     /// running any registered middleware around the call.
     pub async fn call(&self, mut call: RequestCall<'_>) -> CallResult {
         use vox_types::{ClientCallOutcome, ClientContext, ClientRequest, Extensions};
 
-        let Some(service) = self.service else {
+        if self.service.is_none() && self.global_middlewares.is_empty() {
             return self.inner.call_inner(call, None).await;
-        };
+        }
 
         let extensions = Extensions::new();
-        let method = service.by_id(call.method_id);
+        // A caller with global middlewares but no service still runs
+        // them — the context just carries no method descriptor, exactly
+        // what `ClientContext::new` models with an `Option`.
+        let method = self.service.and_then(|service| service.by_id(call.method_id));
         if call.schemas.is_empty()
             && let Some(method) = method
         {
@@ -1450,20 +1477,18 @@ impl Caller {
         }
         let context = ClientContext::new(method, call.method_id, &extensions);
 
-        if !self.middlewares.is_empty() {
-            for middleware in &self.middlewares {
-                let mut request = ClientRequest::new(&mut call);
-                middleware.pre(&context, &mut request).await;
-            }
+        for middleware in self.global_middlewares.iter().chain(&self.middlewares) {
+            let mut request = ClientRequest::new(&mut call);
+            middleware.pre(&context, &mut request).await;
         }
 
         let result = self.inner.call_inner(call, method).await;
-        if !self.middlewares.is_empty() {
+        if !self.middlewares.is_empty() || !self.global_middlewares.is_empty() {
             let outcome = match &result {
                 Ok(_) => ClientCallOutcome::Response,
                 Err(error) => ClientCallOutcome::Error(error),
             };
-            for middleware in self.middlewares.iter().rev() {
+            for middleware in self.middlewares.iter().rev().chain(self.global_middlewares.iter().rev()) {
                 middleware.post(&context, outcome).await;
             }
         }

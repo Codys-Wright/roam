@@ -22,11 +22,17 @@ default = []
 diagnostics = []
 
 [dependencies]
-vox-types.workspace = true
+# Registry (NOT workspace-path) versions of the vox siblings, on this
+# branch only: this crate is the one a consumer patches in for
+# `Caller::with_global_middleware`, and a path dep here would drag the
+# whole worktree in with it — including a vox-phon that has moved past
+# the published rc.5 phon. Registry deps keep the patch surface to
+# exactly the crate that changed.
+vox-types = "0.10.0-rc.5"
 facet.workspace = true
 facet-core.workspace = true
-vox-phon.workspace = true
-vox-rt.workspace = true
+vox-phon = "0.10.0-rc.5"
+vox-rt = "0.10.0-rc.5"
 tracing.workspace = true
 zerocopy.workspace = true
 futures-util.workspace = true
